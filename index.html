@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Run AJ Run! - Escape the Office</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --ui-font: 'Courier New', Courier, monospace;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: #fff;
+            font-family: var(--ui-font);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            border: 4px solid #444;
+            image-rendering: pixelated;
+            cursor: pointer;
+            background-color: #222;
+            max-width: 95vw;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: pixelated;
+            max-width: 100%;
+            height: auto;
+        }
+
+        #mobile-controls {
+            display: none;
+            grid-template-areas: 
+                ". u ."
+                "l d r";
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .d-btn {
+            width: 60px;
+            height: 60px;
+            background: #555;
+            border: 4px solid #eee;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            user-select: none;
+            touch-action: none;
+            border-radius: 8px;
+        }
+
+        .d-btn:active {
+            background: #888;
+        }
+
+        @media (pointer: coarse) {
+            #mobile-controls {
+                display: grid;
+            }
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            right: 5px;
+            pointer-events: none;
+            text-transform: uppercase;
+            font-weight: bold;
+            font-size: 11px;
+            display: none;
+            justify-content: space-between;
+            z-index: 20;
+            color: #fff;
+        }
+
+        .ui-segment {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-shadow: 1px 1px #000;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            white-space: nowrap;
+        }
+
+        #progress-container {
+            position: absolute;
+            bottom: 5px;
+            left: 10px;
+            right: 10px;
+            height: 6px;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid #fff;
+            display: none;
+            z-index: 10;
+        }
+
+        #progress-bar {
+            height: 100%;
+            width: 0%;
+            background: #2ecc71;
+            transition: width 0.1s linear;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui-overlay">
+            <div id="floor-display" class="ui-segment">FLOOR: 5</div>
+            <div id="lives-display" class="ui-segment" style="color: #e74c3c">LIVES: 3</div>
+            <div id="score-display" class="ui-segment">POINTS: 0000</div>
+        </div>
+        <div id="progress-container">
+            <div id="progress-bar"></div>
+        </div>
+    </div>
+
+    <div id="mobile-controls">
+        <div class="d-btn" style="grid-area: u" id="btn-up">▲</div>
+        <div class="d-btn" style="grid-area: l" id="btn-left">◀</div>
+        <div class="d-btn" style="grid-area: d" id="btn-down">▼</div>
+        <div class="d-btn" style="grid-area: r" id="btn-right">▶</div>
+    </div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d', { alpha: false }); 
+const floorDisplay = document.getElementById('floor-display');
+const livesDisplay = document.getElementById('lives-display');
+const scoreDisplay = document.getElementById('score-display');
+const uiOverlay = document.getElementById('ui-overlay');
+const progressContainer = document.getElementById('progress-container');
+const progressBar = document.getElementById('progress-bar');
+
+const INTERNAL_W = 160;
+const INTERNAL_H = 240;
+const SCALE = 3; 
+
+canvas.width = INTERNAL_W * SCALE;
+canvas.height = INTERNAL_H * SCALE;
+ctx.scale(SCALE, SCALE);
+ctx.imageSmoothingEnabled = false;
+
+const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+// --- SOUND ENGINE (Web Audio API) ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(type) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    const now = audioCtx.currentTime;
+
+    switch(type) {
+        case 'pickup':
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(440, now);
+            osc.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.start(now);
+            osc.stop(now + 0.1);
+            break;
+        case 'coffee':
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(523.25, now); // C5
+            osc.frequency.exponentialRampToValueAtTime(1046.50, now + 0.2); // C6
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+            break;
+        case 'floppy':
+            osc.type = 'square';
+            [0, 0.05, 0.1].forEach((t, i) => {
+                const f = 600 + (i * 200);
+                osc.frequency.setValueAtTime(f, now + t);
+            });
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
+            break;
+        case 'hit':
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.exponentialRampToValueAtTime(40, now + 0.3);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.3);
+            osc.start(now);
+            osc.stop(now + 0.3);
+            break;
+        case 'start':
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(200, now);
+            osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.1);
+            osc.start(now);
+            osc.stop(now + 0.1);
+            break;
+        case 'clear':
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(523, now);
+            osc.frequency.setValueAtTime(659, now + 0.1);
+            osc.frequency.setValueAtTime(783, now + 0.2);
+            osc.frequency.setValueAtTime(1046, now + 0.3);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.5);
+            osc.start(now);
+            osc.stop(now + 0.5);
+            break;
+    }
+}
+
+let lastTime = Date.now();
+
+const state = {
+    screen: 'START', 
+    floor: 5,
+    score: 0,
+    lives: 3,
+    floorScore: 0,
+    distance: 0,
+    maxDistance: 60000, 
+    gameOverMessage: "",
+    introTimer: 0,
+    player: {
+        x: INTERNAL_W / 2 - 6,
+        y: INTERNAL_H - 60,
+        w: 12,
+        h: 16,
+        speed: 100, 
+        frame: 0,
+        animTimer: 0,
+        powerup: null,
+        powerupTimer: 0,
+        trail: [] 
+    },
+    finishLineY: -500, 
+    doorX: INTERNAL_W / 2 - 15,
+    doorY: -800, 
+    obstacles: [],
+    pickups: [],
+    floatingTexts: [], 
+    keys: {},
+    swipeTrail: [], 
+    touchStart: null,
+    floorConfig: {
+        5: { name: "TOP FLOOR OFFICE", speed: 50, spawnRate: 0.015, color: '#556677' },
+        4: { name: "OPEN PLAN HELL", speed: 65, spawnRate: 0.022, color: '#667755' },
+        3: { name: "MANAGEMENT LABYRINTH", speed: 80, spawnRate: 0.030, color: '#775555' },
+        2: { name: "HR DUNGEON", speed: 95, spawnRate: 0.038, color: '#555577' },
+        1: { name: "GROUND FLOOR EXIT", speed: 110, spawnRate: 0.045, color: '#333333' }
+    },
+    hazardMessages: {
+        'MEETING': [
+            "STUCK IN AN AD-HOC MEETING",
+            "TRAPPED BY A 'QUICK CHAT'",
+            "CAUGHT IN A STEERING GROUP",
+            "MANDATORY DIAL-IN DELAY"
+        ],
+        'NOTIF': [
+            "CAUGHT IN A MS TEAMS LOOP",
+            "INFINITE PINGS FROM SLACK",
+            "URGENT REQUEST INBOX CLUTTER",
+            "NOTIFIED TO DEATH"
+        ],
+        'SLIDES': [
+            "DEATH BY POWERPOINT",
+            "STORYBOARD REVISION HELL",
+            "SCORM COMPLIANCE ERROR",
+            "CLIENT FEEDBACK OVERLOAD"
+        ]
+    }
+};
+
+// --- DRAWING ---
+
+function drawRect(x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
+}
+
+function drawOutlined(x, y, drawFn, outlineColor) {
+    const silhouette = (sx, sy) => {
+        const tempDrawRect = window.drawRect;
+        window.drawRect = (rx, ry, rw, rh, c) => {
+            ctx.fillStyle = outlineColor;
+            ctx.fillRect(Math.floor(rx), Math.floor(ry), Math.floor(rw), Math.floor(rh));
+        };
+        drawFn(sx, sy);
+        window.drawRect = tempDrawRect;
+    };
+
+    silhouette(x - 1, y);
+    silhouette(x + 1, y);
+    silhouette(x, y - 1);
+    silhouette(x, y + 1);
+
+    drawFn(x, y);
+}
+
+function drawPlayerSprite(x, y, frame) {
+    const f = Math.floor(frame) % 2;
+    drawRect(x+3, y, 6, 7, '#ffdbac'); // Head
+    drawRect(x+3, y+5, 6, 2, '#d35400'); // Tie
+    drawRect(x+2, y+7, 8, 5, '#2980b9'); // Suit
+    if (f === 0) { 
+        drawRect(x+2, y+12, 3, 4, '#34495e'); 
+        drawRect(x+7, y+11, 3, 3, '#34495e'); 
+    } else { 
+        drawRect(x+2, y+11, 3, 3, '#34495e'); 
+        drawRect(x+7, y+12, 3, 4, '#34495e'); 
+    }
+}
+
+function drawPlayer(p) {
+    if (p.powerup === 'COFFEE') {
+        p.trail.forEach((t, i) => {
+            ctx.globalAlpha = (i / p.trail.length) * 0.4;
+            drawPlayerSprite(t.x, t.y, t.frame);
+        });
+        ctx.globalAlpha = 1.0;
+    }
+
+    if (p.powerup === 'ANNUAL LEAVE' && Math.floor(Date.now()/100) % 2 === 0) {
+        drawOutlined(p.x, p.y, (sx, sy) => drawPlayerSprite(sx, sy, p.frame), '#f1c40f');
+    } else {
+        drawPlayerSprite(p.x, p.y, p.frame);
+    }
+}
+
+function drawMeetingSprite(x, y) {
+    drawRect(x+4, y+4, 20, 10, '#5d4037'); 
+    drawRect(x+5, y+5, 18, 8, '#795548'); 
+    drawRect(x+10, y+7, 3, 4, '#fff');
+    drawRect(x+16, y+8, 2, 2, '#fff');
+    drawRect(x+1, y+5, 3, 3, '#34495e'); 
+    drawRect(x+1, y+8, 3, 3, '#34495e');
+    drawRect(x+24, y+5, 3, 3, '#34495e'); 
+    drawRect(x+24, y+8, 3, 3, '#34495e');
+    drawRect(x+8, y+1, 3, 3, '#34495e');
+    drawRect(x+13, y+1, 3, 3, '#34495e');
+    drawRect(x+18, y+1, 3, 3, '#34495e');
+}
+
+function drawNotificationSprite(x, y) {
+    drawRect(x+2, y+2, 12, 10, '#f39c12'); 
+    drawRect(x+4, y+12, 3, 2, '#f39c12');
+    drawRect(x+7, y+4, 2, 6, '#fff');
+}
+
+function drawSlideDeckSprite(x, y) {
+    drawRect(x, y, 16, 12, '#bdc3c7'); 
+    drawRect(x+1, y+1, 14, 10, '#fff');
+    drawRect(x+3, y+7, 2, 3, '#2ecc71');
+    drawRect(x+6, y+4, 2, 6, '#f1c40f');
+    drawRect(x+9, y+2, 2, 8, '#e74c3c');
+    drawRect(x+7, y+12, 2, 4, '#333');
+    drawRect(x+4, y+16, 8, 2, '#333');
+}
+
+function drawMeeting(x, y) { drawOutlined(x, y, drawMeetingSprite, '#ff0000'); }
+function drawNotification(x, y) { drawOutlined(x, y, drawNotificationSprite, '#ff0000'); }
+function drawSlideDeck(x, y) { drawOutlined(x, y, drawSlideDeckSprite, '#ff0000'); }
+function drawCoffee(x, y) {
+    drawRect(x+2, y, 8, 10, '#fff'); 
+    drawRect(x+10, y+2, 2, 4, '#fff'); 
+    drawRect(x+3, y+2, 6, 2, '#6f4e37'); 
+}
+function drawLeave(x, y) {
+    drawRect(x, y, 16, 12, '#f1c40f'); 
+    drawRect(x+2, y+2, 12, 8, '#d4ac0d'); 
+}
+function drawFloppy(x, y) {
+    drawRect(x, y, 14, 14, '#34495e');
+    drawRect(x+2, y+1, 10, 4, '#ecf0f1');
+    drawRect(x+4, y+9, 6, 5, '#bdc3c7');
+}
+
+function drawFinishLine(y) {
+    const size = 10;
+    for(let x=0; x<INTERNAL_W; x+=size) {
+        ctx.fillStyle = (Math.floor(x/size) % 2 === 0) ? '#fff' : '#000';
+        ctx.fillRect(x, Math.floor(y), size, 5);
+        ctx.fillStyle = (Math.floor(x/size) % 2 === 0) ? '#000' : '#fff';
+        ctx.fillRect(x, Math.floor(y)+5, size, 5);
+    }
+}
+
+function drawDoor(y) {
+    const dx = state.doorX;
+    drawRect(dx, y, 30, 45, '#3e2723'); 
+    drawRect(dx+2, y+2, 26, 41, '#5d4037'); 
+    drawRect(dx+24, y+20, 3, 3, '#f1c40f'); 
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 6px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('EXIT', dx+15, y+12);
+}
+
+function addFloatingText(x, y, text, color = '#2ecc71') {
+    state.floatingTexts.push({ x, y, text, color, life: 1.0 });
+}
+
+// --- LOGIC ---
+
+function checkOverlap(x, y, w, h) {
+    const padding = 8; 
+    for (const o of state.obstacles) {
+        if (x < o.x + o.w + padding && x + w + padding > o.x && y < o.y + o.h + padding && y + h + padding > o.y) return true;
+    }
+    for (const pk of state.pickups) {
+        if (x < pk.x + pk.w + padding && x + w + padding > pk.x && y < pk.y + pk.h + padding && y + h + padding > pk.y) return true;
+    }
+    return false;
+}
+
+function spawnEntities(dt) {
+    const config = state.floorConfig[state.floor];
+    if (state.distance > state.maxDistance - 800) return; 
+
+    if (Math.random() < config.spawnRate * (dt * 60)) {
+        const types = ['MEETING', 'NOTIF', 'SLIDES'];
+        const type = types[Math.floor(Math.random()*types.length)];
+        const w = type === 'MEETING' ? 28 : 16;
+        const h = type === 'MEETING' ? 15 : (type === 'SLIDES' ? 20 : 16);
+        const x = Math.max(2, Math.min(INTERNAL_W - w - 2, Math.random() * INTERNAL_W));
+        if (!checkOverlap(x, -30, w, h)) state.obstacles.push({ x, y: -30, w, h, type });
+    }
+    
+    if (Math.random() < 0.007 * (dt * 60)) {
+        const r = Math.random();
+        let type = 'COFFEE';
+        if (r > 0.65) type = 'ANNUAL LEAVE';
+        if (r > 0.85) type = 'FLOPPY';
+        
+        const w = 16;
+        const x = Math.max(2, Math.min(INTERNAL_W - w - 2, Math.random() * INTERNAL_W));
+        if (!checkOverlap(x, -30, w, 14)) state.pickups.push({ x, y: -30, w, h: 14, type });
+    }
+}
+
+function update() {
+    const now = Date.now();
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+
+    const config = state.floorConfig[state.floor];
+    const p = state.player;
+
+    if (p.powerup === 'COFFEE') {
+        p.trail.push({ x: p.x, y: p.y, frame: p.frame });
+        if (p.trail.length > 8) p.trail.shift();
+    } else if (p.trail.length > 0) {
+        p.trail.shift();
+    }
+
+    for (let i = state.swipeTrail.length - 1; i >= 0; i--) {
+        state.swipeTrail[i].life -= 120 * dt; 
+        if (state.swipeTrail[i].life <= 0) state.swipeTrail.splice(i, 1);
+    }
+
+    for (let i = state.floatingTexts.length - 1; i >= 0; i--) {
+        state.floatingTexts[i].life -= dt;
+        state.floatingTexts[i].y -= 20 * dt; 
+        if (state.floatingTexts[i].life <= 0) state.floatingTexts.splice(i, 1);
+    }
+
+    p.animTimer += dt;
+    const animThreshold = p.powerup === 'COFFEE' ? 0.06 : 0.12;
+    if (p.animTimer > animThreshold) {
+        p.frame++;
+        p.animTimer = 0;
+    }
+
+    if (state.screen === 'INTRO_FLOOR') {
+        state.introTimer -= dt;
+        if (state.introTimer <= 0) {
+            state.screen = 'PLAY';
+        }
+        return;
+    }
+
+    if (state.screen === 'FINISH_SEQ') {
+        p.y -= 70 * dt; 
+        const targetX = state.doorX + 9;
+        if (p.x < targetX) p.x += 40 * dt;
+        if (p.x > targetX) p.x -= 40 * dt;
+        if (p.y < state.doorY + 20) {
+            playSound('clear');
+            state.screen = 'CLEARED';
+        }
+        return;
+    }
+
+    if (state.screen === 'HIT_PAUSE') {
+        return;
+    }
+
+    if (state.screen !== 'PLAY') return;
+
+    let dx = 0, dy = 0;
+    if (state.keys['ArrowLeft'] || state.keys['a']) dx -= 1;
+    if (state.keys['ArrowRight'] || state.keys['d']) dx += 1;
+    if (state.keys['ArrowUp'] || state.keys['w']) dy -= 1;
+    if (state.keys['ArrowDown'] || state.keys['s']) dy += 1;
+
+    const speedMultiplier = p.powerup === 'COFFEE' ? 2.5 : 1.0;
+    
+    if (dx !== 0 || dy !== 0) {
+        if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+        p.x += dx * p.speed * speedMultiplier * dt;
+        p.y += dy * p.speed * speedMultiplier * dt;
+    }
+
+    p.x = Math.max(0, Math.min(INTERNAL_W - p.w, p.x));
+    p.y = Math.max(0, Math.min(INTERNAL_H - p.h, p.y));
+
+    if (p.powerup) {
+        p.powerupTimer -= dt;
+        if (p.powerupTimer <= 0) p.powerup = null;
+    }
+
+    const scrollSpeed = config.speed * dt;
+    state.distance += config.speed * 20 * dt; 
+    
+    state.score += Math.floor(scrollSpeed * 5);
+    state.floorScore += Math.floor(scrollSpeed * 5);
+    
+    floorDisplay.innerText = `FLOOR: ${state.floor === 1 ? 'G' : state.floor}`;
+    scoreDisplay.innerText = `POINTS: ${Math.floor(state.score).toString().padStart(4, '0')}`;
+    livesDisplay.innerText = `LIVES: ${state.lives}`;
+
+    const progress = Math.min(100, (state.distance / state.maxDistance) * 100);
+    progressBar.style.width = `${progress}%`;
+
+    if (state.distance > state.maxDistance - 1000) {
+        state.finishLineY += scrollSpeed;
+        state.doorY += scrollSpeed;
+    }
+
+    if (state.distance >= state.maxDistance && p.y <= state.finishLineY) {
+        state.screen = 'FINISH_SEQ';
+    }
+
+    spawnEntities(dt);
+
+    for (let i = state.obstacles.length - 1; i >= 0; i--) {
+        const o = state.obstacles[i];
+        o.y += scrollSpeed;
+        if (p.x < o.x + o.w && p.x + p.w > o.x && p.y < o.y + o.h && p.y + p.h > o.y) {
+            if (p.powerup !== 'ANNUAL LEAVE') {
+                state.lives--;
+                playSound('hit');
+                const msgList = state.hazardMessages[o.type];
+                state.gameOverMessage = msgList[Math.floor(Math.random() * msgList.length)];
+                
+                if (state.lives <= 0) {
+                    state.screen = 'GAMEOVER';
+                } else {
+                    state.screen = 'HIT_PAUSE';
+                    state.introTimer = 0;
+                }
+            }
+        }
+        if (o.y > INTERNAL_H) state.obstacles.splice(i, 1);
+    }
+
+    for (let i = state.pickups.length - 1; i >= 0; i--) {
+        const pk = state.pickups[i];
+        pk.y += scrollSpeed;
+        if (p.x < pk.x + pk.w && p.x + p.w > pk.x && p.y < pk.y + pk.h && p.y + p.h > pk.y) {
+            if (pk.type === 'COFFEE') { 
+                state.score += 250; 
+                state.floorScore += 250; 
+                playSound('coffee');
+                addFloatingText(p.x + p.w/2, p.y, "SPEED UP! +250", "#f39c12");
+            } else if (pk.type === 'FLOPPY') { 
+                state.score += 500; 
+                state.floorScore += 500; 
+                playSound('floppy');
+                addFloatingText(p.x + p.w/2, p.y, "WORK BACKED UP! +500", "#3498db");
+            } else if (pk.type === 'ANNUAL LEAVE') {
+                state.score += 200;
+                state.floorScore += 200;
+                playSound('pickup');
+                addFloatingText(p.x + p.w/2, p.y, "SHIELD! +200", "#f1c40f");
+            }
+            p.powerup = pk.type;
+            p.powerupTimer = pk.type === 'FLOPPY' ? 1.5 : 5.0; 
+            state.pickups.splice(i, 1);
+        }
+        if (pk.y > INT
