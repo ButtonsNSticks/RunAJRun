@@ -177,6 +177,15 @@ function playSound(type) {
     const now = audioCtx.currentTime;
 
     switch(type) {
+        case 'walk':
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(60, now);
+            osc.frequency.exponentialRampToValueAtTime(10, now + 0.05);
+            gain.gain.setValueAtTime(0.05, now);
+            gain.gain.linearRampToValueAtTime(0, now + 0.05);
+            osc.start(now);
+            osc.stop(now + 0.05);
+            break;
         case 'pickup':
             osc.type = 'square';
             osc.frequency.setValueAtTime(440, now);
@@ -258,6 +267,7 @@ const state = {
         speed: 100, 
         frame: 0,
         animTimer: 0,
+        walkSoundTimer: 0, // Timer for walking SFX
         powerup: null,
         powerupTimer: 0,
         trail: [] 
@@ -513,6 +523,14 @@ function update() {
         const targetX = state.doorX + 9;
         if (p.x < targetX) p.x += 40 * dt;
         if (p.x > targetX) p.x -= 40 * dt;
+
+        // Walking sound during sequence
+        p.walkSoundTimer -= dt;
+        if (p.walkSoundTimer <= 0) {
+            playSound('walk');
+            p.walkSoundTimer = 0.25;
+        }
+
         if (p.y < state.doorY + 20) {
             playSound('clear');
             state.screen = 'CLEARED';
@@ -533,11 +551,22 @@ function update() {
     if (state.keys['ArrowDown'] || state.keys['s']) dy += 1;
 
     const speedMultiplier = p.powerup === 'COFFEE' ? 2.5 : 1.0;
+    const isMoving = dx !== 0 || dy !== 0;
     
-    if (dx !== 0 || dy !== 0) {
+    if (isMoving) {
         if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
         p.x += dx * p.speed * speedMultiplier * dt;
         p.y += dy * p.speed * speedMultiplier * dt;
+
+        // Walking Sound logic
+        p.walkSoundTimer -= dt;
+        if (p.walkSoundTimer <= 0) {
+            playSound('walk');
+            // Faster steps when on coffee
+            p.walkSoundTimer = p.powerup === 'COFFEE' ? 0.15 : 0.25;
+        }
+    } else {
+        p.walkSoundTimer = 0; // Reset so sound plays immediately when starting to move
     }
 
     p.x = Math.max(0, Math.min(INTERNAL_W - p.w, p.x));
@@ -617,4 +646,290 @@ function update() {
             p.powerupTimer = pk.type === 'FLOPPY' ? 1.5 : 5.0; 
             state.pickups.splice(i, 1);
         }
-        if (pk.y > INT
+        if (pk.y > INTERNAL_H) state.pickups.splice(i, 1);
+    }
+}
+
+function draw() {
+    const config = state.floorConfig[state.floor];
+    ctx.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+    const activeGameScreens = ['PLAY', 'FINISH_SEQ', 'CLEARED', 'GAMEOVER', 'HIT_PAUSE'];
+    uiOverlay.style.display = activeGameScreens.includes(state.screen) ? 'flex' : 'none';
+    progressContainer.style.display = (state.screen === 'PLAY' || state.screen === 'FINISH_SEQ') ? 'block' : 'none';
+
+    if (state.screen === 'START') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, '#111');
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(0, 40, INTERNAL_W, 60);
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 14px monospace';
+        ctx.fillText('RUN AJ RUN!', INTERNAL_W/2, 60);
+        ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 7px monospace';
+        ctx.fillText('HELP AJ ESCAPE THE OFFICE', INTERNAL_W/2, 80);
+        ctx.fillStyle = '#fff'; ctx.font = '8px monospace';
+        ctx.fillText(isTouchDevice ? 'TAP TO START' : 'PRESS SPACE TO START', INTERNAL_W/2, 160);
+        drawPlayerSprite(INTERNAL_W/2 - 6, 110, 0);
+        return;
+    }
+
+    if (state.screen === 'HOWTO_PICKUPS') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, '#1a1a1a');
+        ctx.fillStyle = '#2ecc71'; ctx.fillRect(0, 10, INTERNAL_W, 25);
+        ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = 'bold 14px monospace';
+        ctx.fillText('OFFICE PERKS', INTERNAL_W/2, 28);
+        ctx.textAlign = 'left'; ctx.font = '8px monospace';
+        drawCoffee(15, 60); ctx.fillStyle = '#f39c12'; ctx.fillText('COFFEE', 40, 68);
+        ctx.fillStyle = '#bdc3c7'; ctx.font = '6px monospace'; ctx.fillText('SPEED BOOST & +250 PTS', 40, 78);
+        drawLeave(15, 100); ctx.fillStyle = '#f1c40f'; ctx.font = '8px monospace';
+        ctx.fillText('ANNUAL LEAVE', 40, 108);
+        ctx.fillStyle = '#bdc3c7'; ctx.font = '6px monospace'; ctx.fillText('SHIELD & +200 PTS', 40, 118);
+        drawFloppy(15, 140); ctx.fillStyle = '#3498db'; ctx.font = '8px monospace'; ctx.fillText('FLOPPY DISK', 40, 148);
+        ctx.fillStyle = '#bdc3c7'; ctx.font = '6px monospace'; ctx.fillText('BONUS +500 PTS', 40, 158);
+        ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = '7px monospace';
+        ctx.fillText(isTouchDevice ? 'TAP FOR NEXT PAGE' : 'SPACE FOR NEXT PAGE', INTERNAL_W/2, 215);
+        return;
+    }
+
+    if (state.screen === 'HOWTO_OBSTACLES') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, '#1a1a1a');
+        ctx.fillStyle = '#e74c3c'; ctx.fillRect(0, 10, INTERNAL_W, 25);
+        ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = 'bold 14px monospace';
+        ctx.fillText('WORK HAZARDS', INTERNAL_W/2, 28);
+        ctx.textAlign = 'left'; ctx.font = '7px monospace';
+        drawMeeting(10, 60); ctx.fillStyle = '#bdc3c7'; ctx.fillText('AD-HOC MEETING', 45, 70);
+        drawNotification(15, 100); ctx.fillStyle = '#bdc3c7'; ctx.fillText('TEAMS PINGS', 45, 110);
+        drawSlideDeck(15, 140); ctx.fillStyle = '#bdc3c7'; ctx.fillText('30-SLIDE DECK', 45, 152);
+        ctx.textAlign = 'center'; ctx.fillStyle = '#2ecc71'; ctx.font = 'bold 8px monospace';
+        ctx.fillText(isTouchDevice ? 'TAP TO START RUNNING!' : 'SPACE TO START RUNNING!', INTERNAL_W/2, 215);
+        return;
+    }
+
+    if (state.screen === 'INTRO_FLOOR' || state.screen === 'HIT_PAUSE') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, '#000');
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 12px monospace';
+        if (state.screen === 'HIT_PAUSE') {
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillText('WHOOPS!', INTERNAL_W/2, 60);
+            ctx.fillStyle = '#fff';
+            ctx.font = '7px monospace';
+            const words = state.gameOverMessage.split(' ');
+            let line = ''; let yPos = 85;
+            for(let n = 0; n < words.length; n++) {
+                let testLine = line + words[n] + ' ';
+                if (testLine.length > 20) { ctx.fillText(line, INTERNAL_W/2, yPos); line = words[n] + ' '; yPos += 10; }
+                else line = testLine;
+            }
+            ctx.fillText(line, INTERNAL_W/2, yPos);
+            ctx.fillStyle = '#f1c40f';
+            ctx.font = 'bold 9px monospace';
+            ctx.fillText(`LIVES REMAINING: ${state.lives}`, INTERNAL_W/2, yPos + 25);
+            ctx.fillStyle = '#fff';
+            ctx.font = '6px monospace';
+            ctx.fillText(isTouchDevice ? 'TAP TO TRY AGAIN' : 'SPACE TO TRY AGAIN', INTERNAL_W/2, 210);
+        } else {
+            ctx.fillText(`FLOOR ${state.floor}`, INTERNAL_W/2, 100);
+            ctx.fillStyle = '#bdc3c7';
+            ctx.font = 'bold 8px monospace'; ctx.fillText(config.name, INTERNAL_W/2, 120);
+        }
+        return;
+    }
+
+    if (state.screen === 'PLAY' || state.screen === 'FINISH_SEQ') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, config.color);
+        ctx.fillStyle = 'rgba(0,0,0,0.1)';
+        const offset = (Math.floor(state.distance / 10) % 32);
+        for(let j=-1; j<9; j++) ctx.fillRect(0, j*32 + offset, INTERNAL_W, 1);
+        
+        if (state.distance > state.maxDistance - 1000 || state.screen === 'FINISH_SEQ') { 
+            drawFinishLine(state.finishLineY); 
+            drawDoor(state.doorY); 
+        }
+
+        state.pickups.forEach(pk => {
+            if (pk.type === 'COFFEE') drawCoffee(pk.x, pk.y);
+            else if (pk.type === 'ANNUAL LEAVE') drawLeave(pk.x, pk.y);
+            else drawFloppy(pk.x, pk.y);
+        });
+        state.obstacles.forEach(o => {
+            if (o.type === 'MEETING') drawMeeting(o.x, o.y);
+            else if (o.type === 'NOTIF') drawNotification(o.x, o.y);
+            else drawSlideDeck(o.x, o.y);
+        });
+        drawPlayer(state.player);
+
+        ctx.textAlign = 'center'; ctx.font = 'bold 8px monospace';
+        state.floatingTexts.forEach(ft => {
+            ctx.fillStyle = ft.color;
+            ctx.globalAlpha = Math.min(1, ft.life * 2);
+            ctx.fillText(ft.text, ft.x, ft.y);
+            ctx.globalAlpha = 1.0;
+        });
+    }
+
+    if (state.screen === 'CLEARED') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, '#111');
+        ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(10, 45, INTERNAL_W-20, 60);
+        ctx.fillStyle = '#2ecc71'; ctx.textAlign = 'center'; ctx.font = 'bold 10px monospace';
+        ctx.fillText(`FLOOR ${state.floor} CLEARED!`, INTERNAL_W/2, 65);
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace';
+        ctx.fillText(`BONUS: +${state.floorScore}`, INTERNAL_W/2, 90);
+        ctx.fillStyle = '#bdc3c7'; ctx.font = '8px monospace';
+        ctx.fillText(isTouchDevice ? 'TAP TO DESCEND' : 'PRESS SPACE TO DESCEND', INTERNAL_W/2, 160);
+    }
+
+    if (state.screen === 'WIN') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, '#000');
+        ctx.fillStyle = '#2ecc71'; ctx.textAlign = 'center'; ctx.font = 'bold 12px monospace';
+        ctx.fillText('FREEDOM!', INTERNAL_W/2, 60);
+        ctx.fillStyle = '#fff'; ctx.font = '8px monospace';
+        ctx.fillText(`FINAL SCORE: ${state.score}`, INTERNAL_W/2, 100);
+        ctx.fillStyle = '#f1c40f'; ctx.fillText('AJ IS OUT OF OFFICE', INTERNAL_W/2, 130);
+        ctx.fillStyle = '#fff'; ctx.font = '6px monospace';
+        ctx.fillText(isTouchDevice ? 'TAP TO REPLAY' : 'PRESS SPACE TO REPLAY', INTERNAL_W/2, 200);
+    }
+
+    if (state.screen === 'GAMEOVER') {
+        drawRect(0, 0, INTERNAL_W, INTERNAL_H, 'rgba(0,0,0,0.9)');
+        ctx.fillStyle = '#e74c3c'; ctx.textAlign = 'center'; ctx.font = 'bold 12px monospace';
+        ctx.fillText('GAME OVER', INTERNAL_W/2, 60);
+        
+        ctx.fillStyle = '#fff'; ctx.font = '7px monospace';
+        const words = state.gameOverMessage.split(' ');
+        let line = ''; let yPos = 85;
+        for(let n = 0; n < words.length; n++) {
+            let testLine = line + words[n] + ' ';
+            if (testLine.length > 20) { ctx.fillText(line, INTERNAL_W/2, yPos); line = words[n] + ' '; yPos += 10; }
+            else line = testLine;
+        }
+        ctx.fillText(line, INTERNAL_W/2, yPos);
+        
+        ctx.fillStyle = '#2ecc71'; ctx.font = 'bold 10px monospace';
+        ctx.fillText(`FINAL SCORE: ${state.score}`, INTERNAL_W/2, 140);
+
+        ctx.fillStyle = '#bdc3c7'; ctx.font = '8px monospace';
+        ctx.fillText(isTouchDevice ? 'TAP TO EXIT TO MENU' : 'SPACE TO EXIT TO MENU', INTERNAL_W/2, 180);
+    }
+
+    state.swipeTrail.forEach(pt => {
+        ctx.fillStyle = `rgba(255, 255, 255, ${pt.life / 20})`;
+        ctx.fillRect(Math.floor(pt.x), Math.floor(pt.y), 2, 2);
+    });
+}
+
+// --- INPUTS ---
+
+function handleInput() {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (state.screen === 'START') { playSound('start'); state.screen = 'HOWTO_PICKUPS'; return; }
+    if (state.screen === 'HOWTO_PICKUPS') { playSound('start'); state.screen = 'HOWTO_OBSTACLES'; return; }
+    if (state.screen === 'HOWTO_OBSTACLES') { playSound('start'); resetGame(); startFloor(); return; }
+    if (state.screen === 'HIT_PAUSE') { playSound('start'); startFloor(false); return; } 
+    if (state.screen === 'CLEARED') {
+        playSound('start');
+        if (state.floor > 1) { state.floor--; startFloor(); }
+        else { state.screen = 'WIN'; }
+        return;
+    }
+    if (state.screen === 'GAMEOVER' || state.screen === 'WIN') {
+        playSound('start');
+        state.screen = 'START';
+        return;
+    }
+}
+
+function resetGame() {
+    state.floor = 5;
+    state.score = 0;
+    state.lives = 3;
+}
+
+function startFloor(resetFloorScore = true) {
+    state.screen = 'INTRO_FLOOR';
+    state.introTimer = 1.5;
+    state.distance = 0;
+    if (resetFloorScore) state.floorScore = 0;
+    state.obstacles = [];
+    state.pickups = [];
+    state.floatingTexts = [];
+    const config = state.floorConfig[state.floor];
+    state.maxDistance = config.speed * 20 * 60; 
+    state.finishLineY = -200; 
+    state.doorY = -500; 
+    state.player.x = INTERNAL_W / 2 - 6;
+    state.player.y = INTERNAL_H - 60;
+    state.player.powerup = null;
+    state.player.trail = [];
+    state.player.walkSoundTimer = 0;
+    lastTime = Date.now();
+}
+
+window.addEventListener('keydown', e => {
+    state.keys[e.key] = true;
+    if (e.code === 'Space' || e.code === 'Enter') { 
+        e.preventDefault(); 
+        handleInput(); 
+    }
+});
+window.addEventListener('keyup', e => state.keys[e.key] = false);
+
+function getTouchPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    return {
+        x: (touch.clientX - rect.left) / (rect.width / INTERNAL_W),
+        y: (touch.clientY - rect.top) / (rect.height / INTERNAL_H)
+    };
+}
+
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (state.screen !== 'PLAY') handleInput();
+    else {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        state.touchStart = getTouchPos(e);
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (state.screen !== 'PLAY' || !state.touchStart) return;
+    const current = getTouchPos(e);
+    state.swipeTrail.push({ x: current.x, y: current.y, life: 20 });
+    const dx = current.x - state.touchStart.x;
+    const dy = current.y - state.touchStart.y;
+    const thresh = 10;
+    state.keys['ArrowLeft'] = state.keys['ArrowRight'] = state.keys['ArrowUp'] = state.keys['ArrowDown'] = false;
+    if (Math.abs(dx) > thresh || Math.abs(dy) > thresh) {
+        if (Math.abs(dx) > Math.abs(dy)) state.keys[dx > 0 ? 'ArrowRight' : 'ArrowLeft'] = true;
+        else state.keys[dy > 0 ? 'ArrowDown' : 'ArrowUp'] = true;
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => {
+    state.touchStart = null;
+    if (state.screen === 'PLAY') {
+        state.keys['ArrowLeft'] = state.keys['ArrowRight'] = state.keys['ArrowUp'] = state.keys['ArrowDown'] = false;
+    }
+});
+
+function bindBtn(id, key) {
+    const b = document.getElementById(id);
+    b.addEventListener('touchstart', (e) => { 
+        e.preventDefault(); 
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        state.keys[key] = true; 
+    }, { passive: false });
+    b.addEventListener('touchend', (e) => { e.preventDefault(); state.keys[key] = false; }, { passive: false });
+}
+bindBtn('btn-up', 'ArrowUp'); bindBtn('btn-down', 'ArrowDown');
+bindBtn('btn-left', 'ArrowLeft'); bindBtn('btn-right', 'ArrowRight');
+
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
